@@ -12,6 +12,7 @@ import win32serviceutil
 USERNAME = 'user'
 PASSWORD = 'password'
 
+
 class WebServer(win32serviceutil.ServiceFramework):
     _svc_name_ = "py_djoin_api"
     _svc_display_name_ = "Python Djoin API"
@@ -22,8 +23,8 @@ class WebServer(win32serviceutil.ServiceFramework):
         self.app_process = None
 
     def SvcStop(self):
-        self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
         self.stop_event.set()
+        self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
         return 0
 
     def SvcDoRun(self):
@@ -36,16 +37,19 @@ class WebServer(win32serviceutil.ServiceFramework):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
             server_socket.bind((host, port))
             server_socket.listen(5)
+            server_socket.settimeout(10)
             print(f"Web server listening on port {port}")
             while not self.stop_event.is_set():
-                client_socket, address = server_socket.accept()
-                self.app_process = threading.Thread(target=self.handle_client, args=(client_socket,))
-                self.app_process.start()
-                self.app_process.join()
+                try:
+                    client_socket, address = server_socket.accept()
+                    self.app_process = threading.Thread(target=self.handle_client, args=(client_socket,))
+                    self.app_process.start()
+                    self.app_process.join()
+                except socket.timeout:
+                    pass
 
     def handle_client(self, client_socket):
         request_data = client_socket.recv(1024)
-        print(request_data)
         request_lines = request_data.decode().split('\r\n')
 
         # Extract request method and target URL
@@ -58,11 +62,17 @@ class WebServer(win32serviceutil.ServiceFramework):
         for line in request_lines:
             if line.startswith('Authorization: Basic'):
                 authorization_header = line.split(' ', 1)[1]
+                authorization_header = authorization_header.split(' ')[1]
                 break
 
         if authorization_header:
             # Decode and validate credentials
-            decoded_credentials = base64.b64decode(authorization_header).decode()
+            try:
+                decoded_credentials = base64.b64decode(authorization_header).decode('utf-8')
+
+            except (UnicodeDecodeError, ValueError) as e:
+                print(e)
+                decoded_credentials = base64.b64decode(authorization_header).decode('latin-1')
             username, password = decoded_credentials.split(':', 1)
 
             if username == USERNAME and password == PASSWORD:
@@ -72,13 +82,27 @@ class WebServer(win32serviceutil.ServiceFramework):
                     computer_name = target_url.split('=')[1]
                     print(f"Current Computername {computer_name}")
 
-                    powershell_command = f"djoin /PROVISION /REUSE /DOMAIN test /MACHINE {computer_name} /SAVEFILE /PRINTBLOB | ConvertTo-Json"
+                    # TODO: PC checken via z.B. LDAP ob er existiert
+                    try:
+                        #get_pc = f"Get-ADComputer -Identity {computer_name}"
+                        pass
+                    except:
+                        response_headers = "HTTP/1.1 404 PC Not Found\r\nContent-Length: 0\r\n\r\n"
+                        client_socket.sendall(response_headers.encode())
+                        client_socket.close()
+                        return False
+
+                    powershell_command = f"djoin /PROVISION /REUSE /DOMAIN test /MACHINE {computer_name} /SAVEFILE /PRINTBLOB | ConvertTo-JSON"
 
                     # PowerShell-Befehl ausführen und Ergebnis abrufen
-                    result = subprocess.run(['powershell', '-Command', powershell_command], capture_output=True, text=True)
+                    result = subprocess.run(['powershell', '-Command', powershell_command], capture_output=True,
+                                            text=True)
                     output = result.stdout.strip()
                     response_data = json.loads(output)
-                    response = json.dumps(response_data)
+                    for response in response_data:
+                        if len(response) > 300:
+                            response_blob = response
+                    response = json.dumps(response_blob)
                     response_headers = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n"
                     client_socket.sendall((response_headers + response).encode())
                 else:
