@@ -16,6 +16,7 @@ PASSWORD = 'password'
 class WebServer(win32serviceutil.ServiceFramework):
     _svc_name_ = "py_djoin_api"
     _svc_display_name_ = "Python Djoin API"
+    _svc_description_ = "Python Djoin API to join computers offline"
 
     def __init__(self, args):
         win32serviceutil.ServiceFramework.__init__(self, args)
@@ -25,10 +26,9 @@ class WebServer(win32serviceutil.ServiceFramework):
     def SvcStop(self):
         self.stop_event.set()
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
-        return 0
 
     def SvcDoRun(self):
-        self.ReportServiceStatus(win32service.SERVICE_RUNNING)
+        self.ReportServiceStatus(win32service.SERVICE_START_PENDING)
         self.start_web_server()
 
     def start_web_server(self):
@@ -37,7 +37,7 @@ class WebServer(win32serviceutil.ServiceFramework):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
             server_socket.bind((host, port))
             server_socket.listen(5)
-            server_socket.settimeout(10)
+            server_socket.settimeout(1)
             print(f"Web server listening on port {port}")
             while not self.stop_event.is_set():
                 try:
