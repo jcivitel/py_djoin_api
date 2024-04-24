@@ -28,7 +28,7 @@ class WebServer(win32serviceutil.ServiceFramework):
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
 
     def SvcDoRun(self):
-        self.ReportServiceStatus(win32service.SERVICE_START_PENDING)
+        self.ReportServiceStatus(win32service.SERVICE_RUNNING)
         self.start_web_server()
 
     def start_web_server(self):
@@ -37,7 +37,7 @@ class WebServer(win32serviceutil.ServiceFramework):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
             server_socket.bind((host, port))
             server_socket.listen(5)
-            server_socket.settimeout(1)
+            server_socket.settimeout(10)
             print(f"Web server listening on port {port}")
             while not self.stop_event.is_set():
                 try:
@@ -84,7 +84,7 @@ class WebServer(win32serviceutil.ServiceFramework):
 
                     # TODO: PC checken via z.B. LDAP ob er existiert
                     try:
-                        #get_pc = f"Get-ADComputer -Identity {computer_name}"
+                        # get_pc = f"Get-ADComputer -Identity {computer_name}"
                         pass
                     except:
                         response_headers = "HTTP/1.1 404 PC Not Found\r\nContent-Length: 0\r\n\r\n"
