@@ -40,7 +40,7 @@ class WebServer(win32serviceutil.ServiceFramework):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
             server_socket.bind((host, port))
             server_socket.listen(5)
-            server_socket.settimeout(10)
+            server_socket.settimeout(1)
             print(f"Web server listening on port {port}")
             while not self.stop_event:
                 try:
@@ -79,6 +79,14 @@ class WebServer(win32serviceutil.ServiceFramework):
                     computer_name = target_url.split('=')[1]
                     print(f"Current Computername {computer_name}")
 
+                    get_pc = f"Get-ADComputer -Identity {computer_name}"
+                    result = subprocess.run(['powershell', '-Command', get_pc], capture_output=True, text=True)
+                    if not result.returncode == 0:
+                        response_headers = "HTTP/1.1 404 PC Not Found\r\nContent-Length: 0\r\n\r\n"
+                        client_socket.sendall(response_headers.encode())
+                        client_socket.close()
+                        return False
+
                     # Powershell-Befehl ausführen
                     powershell_command = f"djoin /PROVISION /REUSE /DOMAIN test /MACHINE {computer_name} /SAVEFILE /PRINTBLOB | ConvertTo-JSON"
                     result = subprocess.run(['powershell', '-Command', powershell_command], capture_output=True,
@@ -98,6 +106,7 @@ class WebServer(win32serviceutil.ServiceFramework):
             else:
                 response_headers = "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nWWW-Authenticate: Basic realm=\"Restricted\"\r\n\r\n"
                 client_socket.sendall(response_headers.encode())
+
         else:
             response_headers = "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nWWW-Authenticate: Basic realm=\"Restricted\"\r\n\r\n"
             client_socket.sendall(response_headers.encode())
