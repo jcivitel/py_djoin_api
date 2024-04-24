@@ -2,8 +2,11 @@ import base64
 import json
 import socket
 import subprocess
+import sys
 import threading
 
+import servicemanager
+import win32event
 import win32service
 import win32serviceutil
 
@@ -16,16 +19,16 @@ PASSWORD = 'password'
 class WebServer(win32serviceutil.ServiceFramework):
     _svc_name_ = "py_djoin_api"
     _svc_display_name_ = "Python Djoin API"
-    _svc_description_ = "Python Djoin API to join computers offline"
 
     def __init__(self, args):
         win32serviceutil.ServiceFramework.__init__(self, args)
-        self.stop_event = threading.Event()
-        self.app_process = None
+        self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
+        self.stop_event = False
 
     def SvcStop(self):
-        self.stop_event.set()
+        self.stop_event = True
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
+        win32event.SetEvent(self.hWaitStop)
 
     def SvcDoRun(self):
         self.ReportServiceStatus(win32service.SERVICE_RUNNING)
@@ -39,12 +42,10 @@ class WebServer(win32serviceutil.ServiceFramework):
             server_socket.listen(5)
             server_socket.settimeout(10)
             print(f"Web server listening on port {port}")
-            while not self.stop_event.is_set():
+            while not self.stop_event:
                 try:
                     client_socket, address = server_socket.accept()
-                    self.app_process = threading.Thread(target=self.handle_client, args=(client_socket,))
-                    self.app_process.start()
-                    self.app_process.join()
+                    threading.Thread(target=self.handle_client, args=(client_socket,)).start()
                 except socket.timeout:
                     pass
 
@@ -69,36 +70,22 @@ class WebServer(win32serviceutil.ServiceFramework):
             # Decode and validate credentials
             try:
                 decoded_credentials = base64.b64decode(authorization_header).decode('utf-8')
-
-            except (UnicodeDecodeError, ValueError) as e:
-                print(e)
+            except (UnicodeDecodeError, ValueError):
                 decoded_credentials = base64.b64decode(authorization_header).decode('latin-1')
             username, password = decoded_credentials.split(':', 1)
 
             if username == USERNAME and password == PASSWORD:
-
                 if request_method == 'GET' and target_url.startswith('/join?computername='):
-                    # Extract the computer name from the URL
                     computer_name = target_url.split('=')[1]
                     print(f"Current Computername {computer_name}")
 
-                    # TODO: PC checken via z.B. LDAP ob er existiert
-                    try:
-                        # get_pc = f"Get-ADComputer -Identity {computer_name}"
-                        pass
-                    except:
-                        response_headers = "HTTP/1.1 404 PC Not Found\r\nContent-Length: 0\r\n\r\n"
-                        client_socket.sendall(response_headers.encode())
-                        client_socket.close()
-                        return False
-
+                    # Powershell-Befehl ausführen
                     powershell_command = f"djoin /PROVISION /REUSE /DOMAIN test /MACHINE {computer_name} /SAVEFILE /PRINTBLOB | ConvertTo-JSON"
-
-                    # PowerShell-Befehl ausführen und Ergebnis abrufen
                     result = subprocess.run(['powershell', '-Command', powershell_command], capture_output=True,
                                             text=True)
                     output = result.stdout.strip()
                     response_data = json.loads(output)
+                    response_blob = ""
                     for response in response_data:
                         if len(response) > 300:
                             response_blob = response
@@ -106,15 +93,12 @@ class WebServer(win32serviceutil.ServiceFramework):
                     response_headers = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n"
                     client_socket.sendall((response_headers + response).encode())
                 else:
-                    # Respond with a 404 error if the request is not a valid GET request for /computer
                     response_headers = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"
                     client_socket.sendall(response_headers.encode())
             else:
-                # Respond with a 401 Unauthorized error if the credentials are invalid
                 response_headers = "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nWWW-Authenticate: Basic realm=\"Restricted\"\r\n\r\n"
                 client_socket.sendall(response_headers.encode())
         else:
-            # Respond with a 401 Unauthorized error if the Authorization header is missing
             response_headers = "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nWWW-Authenticate: Basic realm=\"Restricted\"\r\n\r\n"
             client_socket.sendall(response_headers.encode())
 
@@ -122,4 +106,9 @@ class WebServer(win32serviceutil.ServiceFramework):
 
 
 if __name__ == '__main__':
-    win32serviceutil.HandleCommandLine(WebServer)
+    if len(sys.argv) == 1:
+        servicemanager.Initialize()
+        servicemanager.PrepareToHostSingle(WebServer)
+        servicemanager.StartServiceCtrlDispatcher()
+    else:
+        win32serviceutil.HandleCommandLine(WebServer)
